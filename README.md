@@ -1,6 +1,8 @@
 # Hidden RSI Divergence Scanner
 
-Web app that scans the Nifty 500 (or your own list) for hidden bullish and hidden bearish RSI divergence on daily or weekly candles.
+Web app that scans the Nifty 500 (or your own list) for hidden bullish and hidden bearish RSI divergence on hourly, daily or weekly candles.
+
+Hourly scans use Yahoo Finance's 1-hour candles for the last 3 months (NSE session candles start 09:15, 10:15 ... 15:15 IST). The current unfinished candle is left out by default, for weekly and hourly alike.
 
 - Hidden bullish: higher price low, lower RSI low
 - Hidden bearish: lower price high, higher RSI high

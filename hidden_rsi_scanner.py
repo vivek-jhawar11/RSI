@@ -1,5 +1,5 @@
 """
-Hidden RSI divergence scanner for NIFTY 500 stocks (daily or weekly timeframe).
+Hidden RSI divergence scanner for NIFTY 500 stocks (hourly, daily or weekly timeframe).
 
 Hidden bullish : price makes a HIGHER low,  RSI makes a LOWER low
 Hidden bearish : price makes a LOWER high,  RSI makes a HIGHER high
@@ -11,6 +11,7 @@ Usage:
     pip install yfinance pandas numpy requests
     python hidden_rsi_scanner.py                          # scans NIFTY 500 (daily)
     python hidden_rsi_scanner.py --timeframe weekly       # weekly candles
+    python hidden_rsi_scanner.py --timeframe hourly       # 1-hour candles (last ~3 months)
     python hidden_rsi_scanner.py --list ind_nifty500list.csv   # use a downloaded NSE csv
     python hidden_rsi_scanner.py --file my_list.txt       # one symbol per line
 
@@ -175,7 +176,26 @@ def drop_partial_week(df, now=None):
     return df
 
 
+def drop_partial_hour(df, now=None, bar_minutes=60):
+    """Drop the last hourly bar while it is still forming (NSE session 09:15-15:30 IST)."""
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+    if df.empty:
+        return df
+    now = now or datetime.now(ZoneInfo("Asia/Kolkata"))
+    start = pd.Timestamp(df.index[-1])
+    if start.tzinfo is not None:
+        start = start.tz_convert("Asia/Kolkata").tz_localize(None)
+    session_end = start.normalize() + timedelta(hours=15, minutes=30)
+    bar_end = min(start + timedelta(minutes=bar_minutes), session_end)
+    if now.replace(tzinfo=None) < bar_end:
+        return df.iloc[:-1]
+    return df
+
+
 PRESETS = {
+    "hourly": dict(interval="1h",  period="3mo", order=5, max_age=10, min_gap=5, max_gap=60,
+                   min_bars=60, plot_bars=150),
     "daily":  dict(interval="1d",  period="1y", order=5, max_age=10, min_gap=5, max_gap=60,
                    min_bars=60, plot_bars=120),
     "weekly": dict(interval="1wk", period="3y", order=3, max_age=6,  min_gap=4, max_gap=40,
@@ -184,7 +204,7 @@ PRESETS = {
 
 
 def make_config(timeframe="daily", **overrides):
-    """Settings for 'daily' or 'weekly'. Any override that is not None replaces the preset value."""
+    """Settings for 'hourly', 'daily' or 'weekly'. Any override that is not None replaces the preset value."""
     if timeframe not in PRESETS:
         raise ValueError(f"timeframe must be one of {list(PRESETS)}, got {timeframe!r}")
     cfg = dict(PRESETS[timeframe])
@@ -193,10 +213,14 @@ def make_config(timeframe="daily", **overrides):
     return cfg
 
 
-def prepare_prices(prices, cfg, include_partial_week=False):
-    """For weekly scans, drop the current unfinished week (unless include_partial_week)."""
-    if cfg["timeframe"] == "weekly" and not include_partial_week:
+def prepare_prices(prices, cfg, include_partial=False, include_partial_week=None):
+    """Drop the current unfinished candle for weekly and hourly scans (unless include_partial).
+    include_partial_week is the old name for include_partial and still works."""
+    include_partial = include_partial or bool(include_partial_week)
+    if cfg["timeframe"] == "weekly" and not include_partial:
         return {t: drop_partial_week(d) for t, d in prices.items()}
+    if cfg["timeframe"] == "hourly" and not include_partial:
+        return {t: drop_partial_hour(d) for t, d in prices.items()}
     return prices
 
 
@@ -222,12 +246,13 @@ def main():
     ap.add_argument("--file", help="text file with one NSE symbol per line (instead of Nifty 500)")
     ap.add_argument("--timeframe", choices=list(PRESETS), default="daily",
                     help="candle size to scan (default daily)")
-    ap.add_argument("--order", type=int, help="bars each side to confirm a swing (daily 5, weekly 3)")
-    ap.add_argument("--max-age", type=int, help="max bars since latest swing (daily 10, weekly 6)")
-    ap.add_argument("--min-gap", type=int, help="min bars between the two swings (daily 5, weekly 4)")
-    ap.add_argument("--max-gap", type=int, help="max bars between the two swings (daily 60, weekly 40)")
-    ap.add_argument("--include-partial-week", action="store_true",
-                    help="weekly only: also use the current unfinished week")
+    ap.add_argument("--order", type=int, help="bars each side to confirm a swing (hourly/daily 5, weekly 3)")
+    ap.add_argument("--max-age", type=int, help="max bars since latest swing (hourly/daily 10, weekly 6)")
+    ap.add_argument("--min-gap", type=int, help="min bars between the two swings (hourly/daily 5, weekly 4)")
+    ap.add_argument("--max-gap", type=int, help="max bars between the two swings (hourly/daily 60, weekly 40)")
+    ap.add_argument("--include-partial", "--include-partial-week", dest="include_partial",
+                    action="store_true",
+                    help="weekly/hourly only: also use the current unfinished candle")
     ap.add_argument("--confirmed-only", action="store_true")
     ap.add_argument("--out", help="output csv (default hidden_rsi_signals_<timeframe>.csv)")
     args = ap.parse_args()
@@ -239,7 +264,7 @@ def main():
     tickers = [s + ".NS" for s in symbols]
     print(f"Downloading {args.timeframe} data for {len(tickers)} symbols...")
     prices = download_prices(tickers, period=cfg["period"], interval=cfg["interval"])
-    prices = prepare_prices(prices, cfg, include_partial_week=args.include_partial_week)
+    prices = prepare_prices(prices, cfg, include_partial=args.include_partial)
     rows = scan(prices, cfg)
 
     failed = [t.replace(".NS", "") for t in tickers if t not in prices]

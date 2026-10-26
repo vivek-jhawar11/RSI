@@ -26,13 +26,13 @@ def cached_universe():
     return hrs.get_nifty500()
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=900, show_spinner=False)
 def cached_chunk(chunk, period, interval):
     return hrs.download_prices(list(chunk), period=period, interval=interval, batch=len(chunk), pause=0)
 
 
 def fetch_prices(tickers, period, interval, batch=100):
-    """Download in batches with a progress bar. Each batch is cached for an hour."""
+    """Download in batches with a progress bar. Each batch is cached for 15 minutes."""
     out, bar = {}, st.progress(0.0, text="Downloading prices...")
     for i in range(0, len(tickers), batch):
         chunk = tuple(tickers[i : i + batch])
@@ -76,7 +76,8 @@ st.caption("Hidden bullish: higher price low + lower RSI low. Hidden bearish: lo
 
 with st.sidebar:
     st.header("Settings")
-    timeframe = st.radio("Timeframe", list(hrs.PRESETS), horizontal=True)
+    timeframe = st.radio("Timeframe", list(hrs.PRESETS), index=list(hrs.PRESETS).index("daily"),
+                         horizontal=True)
     preset = hrs.PRESETS[timeframe]
 
     universe = st.radio("Stocks", ["Nifty 500", "My own list"], horizontal=True)
@@ -98,8 +99,9 @@ with st.sidebar:
     signal_filter = st.multiselect("Signal type", ["HIDDEN BULLISH", "HIDDEN BEARISH"],
                                    default=["HIDDEN BULLISH", "HIDDEN BEARISH"])
     include_partial = False
-    if timeframe == "weekly":
-        include_partial = st.checkbox("Include current unfinished week", False)
+    if timeframe in ("weekly", "hourly"):
+        include_partial = st.checkbox(
+            "Include current unfinished " + ("week" if timeframe == "weekly" else "hour"), False)
 
     run = st.button("Run scan", type="primary", width="stretch")
 
@@ -125,7 +127,7 @@ if run:
 
     tickers = [s + ".NS" for s in symbols]
     prices = fetch_prices(tickers, cfg["period"], cfg["interval"])
-    prices = hrs.prepare_prices(prices, cfg, include_partial_week=include_partial)
+    prices = hrs.prepare_prices(prices, cfg, include_partial=include_partial)
     rows = hrs.scan(prices, cfg)
     failed = [t.replace(".NS", "") for t in tickers if t not in prices]
     st.session_state["result"] = dict(rows=rows, prices=prices, cfg=cfg, failed=failed,
@@ -134,7 +136,7 @@ if run:
 res = st.session_state.get("result")
 if not res:
     st.info("Pick your settings in the sidebar and press **Run scan**. "
-            "A full Nifty 500 scan takes a few minutes the first time; repeat scans within an hour are quicker.")
+            "A full Nifty 500 scan takes a few minutes the first time; repeat scans within 15 minutes are quicker.")
     st.stop()
 
 # ---------- results ----------
