@@ -8,6 +8,10 @@ Hourly scans use Yahoo Finance's 1-hour candles for the last 3 months (NSE sessi
 - Hidden bearish: lower price high, higher RSI high
 - No trend filter. Educational tool, not financial advice.
 
+Two optional settings in the sidebar control how strict swing detection is:
+- **Bars to confirm the latest swing** (default = swing size): set to 1 or 2 to catch a fresh low/high earlier. It can be cancelled by the next candles, so expect some false signals.
+- **Compare the latest swing with**: *Previous swing only* (default) or *Any earlier swing in range*, which also finds divergences against an older low/high (raise *Max bars* to look further back).
+
 ## Run on your computer
 
 ```

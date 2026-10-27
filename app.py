@@ -92,6 +92,16 @@ with st.sidebar:
                               key=f"age_{timeframe}")
     min_gap = st.number_input("Min bars between swings", 1, 100, preset["min_gap"], key=f"min_{timeframe}")
     max_gap = st.number_input("Max bars between swings", 2, 200, preset["max_gap"], key=f"max_{timeframe}")
+    confirm = st.number_input(
+        "Bars to confirm the latest swing", 1, int(order), int(order), key=f"confirm_{timeframe}_{int(order)}",
+        help="How many candles must follow a low/high before it counts as a swing. "
+             "1-2 catches fresh swings earlier, but they can be cancelled by the next candles.")
+    compare_label = st.radio(
+        "Compare the latest swing with", ["Previous swing only", "Any earlier swing in range"],
+        key=f"cmp_{timeframe}",
+        help="'Any earlier swing' also finds divergences against an older low/high, "
+             "as long as it is within the min/max bars above. Raise 'Max bars' to look further back.")
+    compare = "any" if compare_label.startswith("Any") else "last"
 
     st.subheader("Filters")
     only_confirmed = st.checkbox("Only confirmed signals", False,
@@ -108,7 +118,8 @@ with st.sidebar:
 # ---------- run ----------
 if run:
     cfg = hrs.make_config(timeframe, order=int(order), max_age=int(max_age),
-                          min_gap=int(min_gap), max_gap=int(max_gap))
+                          min_gap=int(min_gap), max_gap=int(max_gap),
+                          confirm=int(confirm), compare=compare)
     if cfg["min_gap"] > cfg["max_gap"]:
         st.error("Min bars between swings must not exceed the max.")
         st.stop()

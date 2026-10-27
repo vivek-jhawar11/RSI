@@ -12,6 +12,8 @@ Usage:
     python hidden_rsi_scanner.py                          # scans NIFTY 500 (daily)
     python hidden_rsi_scanner.py --timeframe weekly       # weekly candles
     python hidden_rsi_scanner.py --timeframe hourly       # 1-hour candles (last ~3 months)
+    python hidden_rsi_scanner.py --confirm-bars 2 --compare any --max-gap 80
+                                                          # catch fresh swings, compare with any earlier swing
     python hidden_rsi_scanner.py --list ind_nifty500list.csv   # use a downloaded NSE csv
     python hidden_rsi_scanner.py --file my_list.txt       # one symbol per line
 
@@ -46,12 +48,19 @@ def rsi_wilder(close, period=14):
     return out.where(avg_loss != 0, 100.0)
 
 
-def pivots(series, order, kind):
-    """Positions of swing lows/highs confirmed by `order` bars on each side."""
+def pivots(series, order, kind, min_right=None):
+    """Positions of swing lows/highs.
+
+    A swing needs `order` bars on its left and at least `min_right` bars on its right
+    (default: `order`) to count. Swings near the end of the data use whatever bars exist
+    on the right, as long as there are at least `min_right` of them.
+    """
     vals = series.values
+    n = len(vals)
+    min_right = order if min_right is None else max(1, min(int(min_right), order))
     idx = []
-    for i in range(order, len(vals) - order):
-        window = vals[i - order : i + order + 1]
+    for i in range(order, n - min_right):
+        window = vals[i - order : i + min(order, n - 1 - i) + 1]
         if np.isnan(window).any():
             continue
         if kind == "low" and vals[i] == window.min() and (window == vals[i]).sum() == 1:
@@ -61,11 +70,21 @@ def pivots(series, order, kind):
     return idx
 
 
-def detect(df, order=5, rsi_period=14, min_gap=5, max_gap=60, max_age=10, min_bars=60):
+def detect(df, order=5, rsi_period=14, min_gap=5, max_gap=60, max_age=10, min_bars=60,
+           confirm=None, compare="last"):
     """
     df needs High, Low, Close columns. Returns a LIST of signal dicts (0, 1 or 2 items).
+
+    order   : bars each side of a swing (older swings always need this many on both sides).
     max_age : the latest swing must be at most this many bars before the last bar.
+    confirm : bars needed to the right of the LATEST swing (default = order). Use 1 or 2 to
+              catch a fresh low/high earlier; the swing can still be cancelled by later candles.
+    compare : "last" = latest swing vs the previous swing only (strict, the default);
+              "any"  = latest swing vs every earlier swing that is min_gap..max_gap bars back.
+              If several match, the one with the biggest RSI difference is reported.
     """
+    if compare not in ("last", "any"):
+        raise ValueError(f"compare must be 'last' or 'any', got {compare!r}")
     if len(df) < min_bars:
         return []
     df = df.copy()
@@ -77,30 +96,40 @@ def detect(df, order=5, rsi_period=14, min_gap=5, max_gap=60, max_age=10, min_ba
 
     for kind in ("low", "high"):
         bull = kind == "low"
-        pv = pivots(close, order, kind)
+        pv = pivots(close, order, kind, min_right=confirm)
         if len(pv) < 2:
             continue
-        i1, i2 = pv[-2], pv[-1]
-        gap, age = i2 - i1, (n - 1) - i2
-        if not (min_gap <= gap <= max_gap and age <= max_age):
+        i2 = pv[-1]
+        if (n - 1) - i2 > max_age:
             continue
-        c1, c2 = close.iloc[i1], close.iloc[i2]
-        r1, r2 = rsi.iloc[i1], rsi.iloc[i2]
-        if np.isnan(r1) or np.isnan(r2):
+        c2, r2 = close.iloc[i2], rsi.iloc[i2]
+        if np.isnan(r2):
             continue
 
+        earlier = pv[-2:-1] if compare == "last" else pv[:-1]
+        best = None
+        for i1 in earlier:
+            if not (min_gap <= i2 - i1 <= max_gap):
+                continue
+            c1, r1 = close.iloc[i1], rsi.iloc[i1]
+            if np.isnan(r1):
+                continue
+            ok = (c2 > c1 and r2 < r1) if bull else (c2 < c1 and r2 > r1)
+            # bullish: higher price low + lower RSI low; bearish: lower price high + higher RSI high
+            if ok and (best is None or abs(r1 - r2) > best[0]):
+                best = (abs(r1 - r2), i1, c1, r1)
+        if best is None:
+            continue
+        _, i1, c1, r1 = best
+
         if bull:
-            ok = c2 > c1 and r2 < r1          # higher price low, lower RSI low
             stop = df["Low"].iloc[i2]
             confirmed = last["Close"] > prev["High"]
             name = "HIDDEN BULLISH"
         else:
-            ok = c2 < c1 and r2 > r1          # lower price high, higher RSI high
             stop = df["High"].iloc[i2]
             confirmed = last["Close"] < prev["Low"]
             name = "HIDDEN BEARISH"
-        if not ok:
-            continue
 
         signals.append(dict(
             signal=name, confirmed=bool(confirmed),
@@ -229,7 +258,8 @@ def scan(prices, cfg):
     rows = []
     for tk, df in prices.items():
         for res in detect(df, order=cfg["order"], min_gap=cfg["min_gap"], max_gap=cfg["max_gap"],
-                          max_age=cfg["max_age"], min_bars=cfg["min_bars"]):
+                          max_age=cfg["max_age"], min_bars=cfg["min_bars"],
+                          confirm=cfg.get("confirm"), compare=cfg.get("compare", "last")):
             res["symbol"] = tk.replace(".NS", "")
             rows.append(res)
     return rows
@@ -253,11 +283,16 @@ def main():
     ap.add_argument("--include-partial", "--include-partial-week", dest="include_partial",
                     action="store_true",
                     help="weekly/hourly only: also use the current unfinished candle")
+    ap.add_argument("--confirm-bars", type=int,
+                    help="bars needed after the latest swing (default = --order; 1-2 catches fresh swings earlier)")
+    ap.add_argument("--compare", choices=["last", "any"],
+                    help="last = latest swing vs previous swing only (default); any = vs any earlier swing in range")
     ap.add_argument("--confirmed-only", action="store_true")
     ap.add_argument("--out", help="output csv (default hidden_rsi_signals_<timeframe>.csv)")
     args = ap.parse_args()
     cfg = make_config(args.timeframe, order=args.order, max_age=args.max_age,
-                      min_gap=args.min_gap, max_gap=args.max_gap)
+                      min_gap=args.min_gap, max_gap=args.max_gap,
+                      confirm=args.confirm_bars, compare=args.compare)
     out_file = args.out or f"hidden_rsi_signals_{args.timeframe}.csv"
 
     symbols = load_symbols(args.file) if args.file else get_nifty500(args.list)
