@@ -12,6 +12,7 @@ from datetime import date
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import seaborn as sns
 import streamlit as st
 
 import hidden_rsi_scanner as hrs
@@ -61,34 +62,37 @@ def candle_ticks(index, timeframe, max_ticks=8):
 
 
 def make_fig(df, res, timeframe, bars):
-    """Price + RSI chart drawn by candle number, like TradingView: no gaps for nights,
-    weekends or holidays (a real time axis would draw long sloped lines across them)."""
+    """Price + RSI chart (seaborn), drawn by candle number like TradingView: no gaps for
+    nights, weekends or holidays (a real time axis would draw long sloped lines across them)."""
     df = df.copy()
     df["RSI"] = hrs.rsi_wilder(df["Close"])
     d = df.iloc[-bars:]
     x = np.arange(len(d))
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6), sharex=True,
-                                   gridspec_kw={"height_ratios": [3, 1.5]})
-    ax1.plot(x, d["Close"].values, label=f"{timeframe} close")
-    col = "tab:green" if "BULL" in res["signal"] else "tab:red"
+    col = "#2e9e5b" if "BULL" in res["signal"] else "#d64545"
+    with sns.axes_style("whitegrid"):
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6), sharex=True,
+                                       gridspec_kw={"height_ratios": [3, 1.5]})
+    sns.lineplot(x=x, y=d["Close"].values, ax=ax1, color="#1f77b4", linewidth=1.6,
+                 label=f"{timeframe} close")
+    sns.lineplot(x=x, y=d["RSI"].values, ax=ax2, color="#7b3fa0", linewidth=1.4)
     for k in ("swing1", "swing2"):
         pos = d.index.get_indexer([res[k]])[0]
         if pos >= 0:
             for ax in (ax1, ax2):
                 ax.axvline(pos, color=col, alpha=0.3)
-            ax1.scatter([pos], [res["price" + k[-1]]], color=col, zorder=5)
-            ax2.scatter([pos], [res["rsi" + k[-1]]], color=col, zorder=5)
+            sns.scatterplot(x=[pos], y=[res["price" + k[-1]]], ax=ax1, color=col, s=70, zorder=5, legend=False)
+            sns.scatterplot(x=[pos], y=[res["rsi" + k[-1]]], ax=ax2, color=col, s=70, zorder=5, legend=False)
     ax1.axhline(res["stop"], color="gray", linestyle=":", label="Stop level")
     ax1.set_title(f"{res['symbol']} ({timeframe})  {res['signal']}")
-    ax1.legend()
-    ax2.plot(x, d["RSI"].values, color="purple")
-    ax2.axhline(70, color="gray", linewidth=0.5)
-    ax2.axhline(30, color="gray", linewidth=0.5)
+    ax1.legend(loc="upper left")
+    ax2.axhline(70, color="gray", linewidth=0.8, linestyle="--")
+    ax2.axhline(30, color="gray", linewidth=0.8, linestyle="--")
     ax2.set_ylabel("RSI 14")
     ticks, labels = candle_ticks(d.index, timeframe)
     ax2.set_xticks(ticks)
     ax2.set_xticklabels(labels)
     ax2.set_xlim(-1, len(d))
+    sns.despine(fig)
     fig.tight_layout()
     return fig
 
