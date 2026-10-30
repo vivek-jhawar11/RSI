@@ -113,24 +113,49 @@ def detect(df, order=5, rsi_period=14, min_gap=5, max_gap=60, max_age=10, min_ba
     return signals
 
 
+def _symbols_from_table(table):
+    cols = [c for c in table.columns if str(c).strip().lower() == "symbol"]
+    if not cols:
+        raise ValueError("That file has no 'Symbol' column. Use NSE's ind_nifty500list.csv.")
+    syms = table[cols[0]].astype(str).str.strip().str.upper().tolist()
+    syms = [s for s in dict.fromkeys(syms) if s and s != "NAN"]
+    if not syms:
+        raise ValueError("The 'Symbol' column is empty.")
+    return syms
+
+
 def get_nifty500(local_csv=None):
-    """Return the list of NSE symbols in the Nifty 500 (from NSE, or a local csv you saved)."""
-    if local_csv:
-        table = pd.read_csv(local_csv)
-    else:
-        try:
-            r = requests.get(NIFTY500_URL, headers=HEADERS, timeout=30)
-            r.raise_for_status()
-            table = pd.read_csv(io.StringIO(r.text))
-        except Exception as e:
-            raise RuntimeError(
-                f"Could not download the Nifty 500 list from NSE ({e}). Download "
-                f"ind_nifty500list.csv from {NIFTY500_URL} in your browser, put it next to "
-                "this script/notebook and pass its path (local_csv / --list)."
-            )
-    col = next(c for c in table.columns if c.strip().lower() == "symbol")
-    syms = table[col].astype(str).str.strip().str.upper().tolist()
-    return [s for s in dict.fromkeys(syms) if s and s != "NAN"]
+    """Return the Nifty 500 symbols.
+
+    Order tried: (1) a csv path / uploaded file you pass in, (2) NSE's website,
+    (3) a copy named ind_nifty500list.csv stored next to this script.
+    NSE blocks many cloud servers (403), which is why (1) and (3) exist.
+    """
+    import os
+    if local_csv is not None:
+        return _symbols_from_table(pd.read_csv(local_csv))
+
+    try:
+        r = requests.get(NIFTY500_URL, headers=HEADERS, timeout=30)
+        r.raise_for_status()
+        return _symbols_from_table(pd.read_csv(io.StringIO(r.text)))
+    except Exception as e:
+        err = e
+
+    try:
+        here = os.path.dirname(os.path.abspath(__file__))
+    except NameError:                      # running inside a notebook
+        here = os.getcwd()
+    bundled = os.path.join(here, "ind_nifty500list.csv")
+    if os.path.exists(bundled):
+        return _symbols_from_table(pd.read_csv(bundled))
+
+    raise RuntimeError(
+        f"Could not download the Nifty 500 list from NSE ({err}). NSE often blocks cloud servers. "
+        f"Download ind_nifty500list.csv from {NIFTY500_URL} in your own browser, then either upload it "
+        "in the app's sidebar, add it to your GitHub repo next to app.py, or pass its path "
+        "(local_csv / --list)."
+    )
 
 
 def get_frame(data, tk, single=False):

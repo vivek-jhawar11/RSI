@@ -6,6 +6,7 @@ Needs hidden_rsi_scanner.py in the same folder.
 
 Educational tool, not financial advice. Backtest before trading.
 """
+import io
 from datetime import date
 
 import matplotlib.pyplot as plt
@@ -84,6 +85,13 @@ with st.sidebar:
     custom = ""
     if universe == "My own list":
         custom = st.text_area("NSE symbols (comma or space separated)", "TCS, INFY, RELIANCE")
+    uploaded = None
+    if universe == "Nifty 500":
+        uploaded = st.file_uploader(
+            "Nifty 500 list (optional CSV)", type="csv",
+            help="Only needed if NSE blocks the automatic download (error 403). Download "
+                 "ind_nifty500list.csv from NSE in your browser and upload it here. "
+                 "Or add that file to your GitHub repo next to app.py and it is picked up automatically.")
 
     st.subheader("Swing detection")
     order = st.number_input("Bars each side of a swing", 1, 15, preset["order"], key=f"order_{timeframe}",
@@ -114,7 +122,8 @@ if run:
         st.stop()
     try:
         if universe == "Nifty 500":
-            symbols = cached_universe()
+            symbols = (hrs.get_nifty500(io.BytesIO(uploaded.getvalue())) if uploaded is not None
+                       else cached_universe())
         else:
             symbols = [s.strip().upper().replace(".NS", "")
                        for s in custom.replace(",", " ").split() if s.strip()]
